@@ -1,0 +1,11 @@
+{
+  "page": "P",
+  "line": "rail-read",
+  "ratio": [3, 2],
+  "slots": [
+    {"coordinate": "A", "position": 1, "raw": "7", "beats": [1, 2], "ticket": "pick-a"},
+    {"coordinate": "B", "position": 2, "raw": "11", "beats": [1], "ticket": "pick-b"}
+  ],
+  "booking_order": ["pick-a", "pick-b"],
+  "ticks": [1, 2]
+}

@@ -1,0 +1,23 @@
+{
+  "successors": ["east", "west"],
+  "terminal": {
+    "page_id": "p-last",
+    "line": "P",
+    "slots": [
+      {"coordinate": "S0", "position": 1, "label": "E7", "raw": "7"},
+      {"coordinate": "S1", "position": 2, "label": "W11", "raw": "11"}
+    ]
+  },
+  "assignments": [
+    {"coordinate": "S0", "line": "east", "position": 1},
+    {"coordinate": "S1", "line": "west", "position": 1}
+  ],
+  "early_page": {
+    "page_id": "e-first",
+    "line": "east",
+    "slots": [
+      {"coordinate": "S0", "position": 2, "label": "E9", "raw": "9"}
+    ]
+  },
+  "west_through": 1
+}

@@ -1,0 +1,11 @@
+{
+  "ratio": [3, 2],
+  "page": {
+    "page_id": "ordinary-1",
+    "line": "ordinary",
+    "slots": [
+      {"coordinate": "A1", "position": 1, "label": "V7", "raw": "7"},
+      {"coordinate": "A2", "position": 2, "label": "V11", "raw": "11"}
+    ]
+  }
+}
