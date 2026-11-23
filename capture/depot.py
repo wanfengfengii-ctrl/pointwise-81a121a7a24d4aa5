@@ -4,7 +4,8 @@ import sqlite3
 from typing import Iterable
 
 from capture.evidence import EvidenceMismatch, VerifiedSlot
-from recorder.pages import PageHeader, SlotEvidence, SlotRef
+from recorder.feed import WindowRead
+from recorder.pages import PageHeader, RawSlot, SlotEvidence, SlotRef
 
 
 class RetirementState(Enum):
@@ -37,6 +38,12 @@ class CustodyDepot:
             CREATE TABLE IF NOT EXISTS custody_retirements (
                 page_id TEXT PRIMARY KEY REFERENCES custody_pages(page_id),
                 state TEXT NOT NULL CHECK (state IN ('pending', 'confirmed'))
+            );
+            CREATE TABLE IF NOT EXISTS custody_window_reads (
+                ticket TEXT PRIMARY KEY,
+                page_id TEXT NOT NULL,
+                coordinate TEXT NOT NULL,
+                beat INTEGER NOT NULL
             );
         ''')
 
@@ -105,3 +112,21 @@ class CustodyDepot:
         return tuple(row[0] for row in self.db.execute('''
             SELECT page_id FROM custody_retirements WHERE state = 'pending' ORDER BY page_id
         '''))
+
+    def save_window_read(self, read: WindowRead) -> None:
+        """Commit the booking receipt inside the same transaction as its original."""
+        self.db.execute('INSERT INTO custody_window_reads VALUES (?, ?, ?, ?)',
+                        (read.ticket, read.slot.ref.page_id, read.slot.ref.coordinate, read.beat))
+
+    def get_window_read(self, ticket: str) -> WindowRead | None:
+        row = self.db.execute('''
+            SELECT page_id, coordinate, beat FROM custody_window_reads WHERE ticket = ?
+        ''', (ticket,)).fetchone()
+        if row is None:
+            return None
+        page_id, coordinate, beat = row
+        slot = self.get_slot(SlotRef(page_id, coordinate))
+        if slot is None:
+            return None
+        raw = RawSlot(slot.ref, slot.position, slot.label, slot.payload)
+        return WindowRead(ticket, raw, beat)

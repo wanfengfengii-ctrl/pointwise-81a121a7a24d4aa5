@@ -3,7 +3,7 @@ from typing import Iterable
 
 from capture.depot import CustodyDepot
 from capture.evidence import EvidenceMismatch, VerifiedSlot, verify_slot
-from recorder.feed import RecorderFeed
+from recorder.feed import RecorderFeed, WindowRead
 from recorder.pages import PageHeader
 from recorder.status import DeviceUnavailable, PageUnavailable
 
@@ -33,6 +33,8 @@ class CaptureIntake:
         db = self.depot.db
         with db:
             db.execute('BEGIN IMMEDIATE')
+            if self.feed.journal.is_windowed(page_id):
+                raise PageUnavailable(page_id)
             saved_header = self.depot.get_header(page_id)
             header = self._directory(page_id, saved_header)
             by_coordinate = {proof.ref.coordinate: proof for proof in header.slots}
@@ -67,3 +69,37 @@ class CaptureIntake:
                 self.fail_next.remove(page_id)
                 raise CaptureCommitFailed(page_id)
         return tuple(originals)
+
+    def collect(self, ticket: str, terminal: WindowRead | None = None):
+        """核收一份预约实读：原件与预约实收出处一起提交，重投沿用原实收。"""
+        db = self.depot.db
+        with db:
+            db.execute('BEGIN IMMEDIATE')
+            committed = self.depot.get_window_read(ticket)
+            if committed is not None:
+                if terminal is not None and terminal != committed:
+                    raise EvidenceMismatch(f'terminal does not match the collected read: {ticket}')
+                return committed
+            if terminal is not None and getattr(terminal, 'ticket', None) != ticket:
+                raise EvidenceMismatch(f'terminal ticket does not match request: {ticket}')
+            actual = self.feed.read_terminal(ticket)
+            if actual is None:
+                return 'pending'
+            candidate = actual if terminal is None else terminal
+            if candidate != actual:
+                raise EvidenceMismatch(f'terminal does not match the device read: {ticket}')
+            ref = candidate.slot.ref
+            header = self._directory(ref.page_id, self.depot.get_header(ref.page_id))
+            proofs = {proof.ref: proof for proof in header.slots}
+            if ref not in proofs:
+                raise EvidenceMismatch(f'terminal slot is not in the device directory: {ref}')
+            verified = verify_slot(ref, candidate.slot, proofs[ref])
+            self.depot.save_verified(header, (verified,))
+            self.depot.save_window_read(candidate)
+            if ref.page_id in self.fail_next:
+                self.fail_next.remove(ref.page_id)
+                raise CaptureCommitFailed(ref.page_id)
+            return candidate
+
+    def lookup_read(self, ticket: str) -> WindowRead | None:
+        return self.depot.get_window_read(ticket)

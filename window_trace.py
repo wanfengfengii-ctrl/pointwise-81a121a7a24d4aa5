@@ -11,7 +11,7 @@ from capture.intake import CaptureCommitFailed
 from delivery.continuity import ContinuityGap, DeliverySegment
 from recorder.pages import PhysicalPage, RawSlot, SlotRef
 from recorder.status import PageUnavailable
-from review.workbench import initialize_workspace, open_workbench
+from review.workbench import initialize_workspace, open_workbench, run_demo as shift_demo
 
 
 def parse_fixture(data):
@@ -110,17 +110,56 @@ def run_trace(data):
                               "receipt": saved.receipt.receipt_id}, ensure_ascii=False))
 
 
+def run_demo(data):
+    shift_demo()
+    page, windows, refs = parse_fixture(data)
+    first, second = data["booking_order"]
+    segment = DeliverySegment(2, (page.page_id,))
+    ratio = Fraction(*data["ratio"])
+    with TemporaryDirectory(prefix="read-window-demo-") as directory:
+        path = Path(directory) / "work.sqlite"
+        initialize_workspace(path)
+        with open_workbench(path) as desk:
+            desk.lines.register(page.line, *data["ratio"])
+            desk.feed.feed_windowed(page, windows)
+            booked = {ticket: desk.feed.book(ticket, refs[ticket]) for ticket in data["booking_order"]}
+        with open_workbench(path) as desk:
+            picks = [desk.feed.tick(page.page_id, beat) for beat in data["ticks"]]
+        with open_workbench(path) as desk:
+            collected = [desk.intake.collect(ticket) for ticket in data["booking_order"]]
+            desk.device.stop()
+            arrived = [desk.intake.lookup_read(ticket) for ticket in data["booking_order"]]
+            again = desk.intake.collect(second)
+            result = desk.publisher.publish(page.line, segment)
+            saved = desk.lookup.review(result.result_id)
+        if arrived != collected or again != collected[1]:
+            raise RuntimeError("offline claims do not match the collected reads")
+        ordered = sorted(data["slots"], key=lambda item: item["position"])
+        expected = [Fraction(item["raw"]) * ratio for item in ordered]
+        if [row.value for row in saved.readings] != expected:
+            raise RuntimeError("published readings do not match the window reads")
+        describe = lambda entry: {"ticket": entry.ticket, "slot": entry.slot.ref.coordinate,
+                                  "beat": entry.beat, "raw": entry.slot.payload.decode("ascii")}
+        print(json.dumps({"page": page.page_id, "bookings": booked, "device_order": picks,
+                          "reads": [describe(entry) for entry in collected],
+                          "offline_claims": [describe(entry) for entry in arrived],
+                          "published": [str(row.value) for row in saved.readings],
+                          "receipt": saved.receipt.receipt_id}, ensure_ascii=False))
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("fixture", "trace"))
+    parser.add_argument("mode", choices=("fixture", "trace", "demo"))
     args = parser.parse_args()
     with (Path(__file__).parent / "samples" / "read_windows.json").open(encoding="utf-8") as handle:
         data = json.load(handle)
     if args.mode == "fixture":
         page, windows, refs = parse_fixture(data)
         print(page.page_id, windows, refs)
-    else:
+    elif args.mode == "trace":
         run_trace(data)
+    else:
+        run_demo(data)
 
 
 if __name__ == "__main__":

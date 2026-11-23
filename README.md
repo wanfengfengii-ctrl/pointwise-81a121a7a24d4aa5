@@ -8,10 +8,10 @@
 
 ```text
 python3 -B check_project.py
-python3 -B -m review.workbench demo
+python3 -B window_trace.py demo
 ```
 
-演示只在临时目录初始化工作库，读入 `samples/` 的三份固定数据。普通线路将 7、11 按 3/2 换算成 21/2、33/2 微米每秒。拆分样例在 E9 早到时等待 E7，西路提交失败时东路仍签出 E7、E9。设备清退旧页并失答后，次班查实终局、关闭设备、补签 W11，并凭两路成果号完成交班复核。
+演示只在临时目录初始化工作库，读入 `samples/` 的固定数据，先执行原有的普通、拆分与交班流程，再按 READ_WINDOWS.md 展示单页读窗预约从实读到停源领取。普通线路将 7、11 按 3/2 换算成 21/2、33/2 微米每秒。拆分样例在 E9 早到时等待 E7，西路提交失败时东路仍签出 E7、E9。设备清退旧页并失答后，次班查实终局、关闭设备、补签 W11，并凭两路成果号完成交班复核。读窗样例中 A、B 两单共用一页读头，设备按 B、A 交错实读，站库实收后在停源会话按预约领回实际拍和原码，两槽按原线路序签存。
 
 ## Python 接口
 
@@ -26,5 +26,7 @@ python3 -B -m review.workbench demo
 7. `desk.lookup.review(result_id)` 返回固定 `DeliveryResult`，包含按本路序位排列的读值、逐槽物理出处和回执。未知或未提交成果抛出 `ResultUnavailable`。`desk.shift.begin_batch(batch_id)` 开班，`register_item(batch_id, item_id, result_id, checklist)` 登记成果号和独立核对项，`record_review(batch_id, item_id)` 领取并记录实际出处及逐项差异，`get_batch(batch_id)` 读取历史批次。领取失败的项目仍待复核。
 
 线路正常写入从序位 1 开始。允许按设备到达顺序接管，交付始终使用本路连续序位。原件保管与各路签存各自提交，已确认清退的原件仍可用于补签。首次签存成功后，按号领取和确切重投均使用固定历史，不受后续前缀推进影响。
+
+窗口页的单页读窗预约入口（`feed_windowed`、`book`、`tick`、`read_terminal`、`collect`、`lookup_read`）见 READ_WINDOWS.md，普通流程不受影响。
 
 确定性演练通过当前会话的设备替身进行。`desk.feed.paused_slots` 可暂停指定槽，`slot_replies` 可替换一次会话内对指定槽的传输内容。`desk.reclaimer.lose_reply` 与 `defer_next` 分别安排一次清退提交后失答和执行前失答。`desk.intake.fail_next` 和 `desk.publisher.fail_next` 分别按页号和线路号安排一次提交前失败。`desk.device.stop()` 暂停设备读写和查询，新会话可重新查询持久设备状态。正常数据都通过相同目录校验、接管、事务和复核入口。

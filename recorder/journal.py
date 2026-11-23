@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 from recorder.pages import PageHeader, PhysicalPage, RawSlot, SlotEvidence, SlotRef
@@ -28,6 +29,30 @@ class RecorderJournal:
                 payload BLOB,
                 PRIMARY KEY (page_id, coordinate),
                 UNIQUE (line, position)
+            );
+            CREATE TABLE IF NOT EXISTS window_pages (
+                page_id TEXT PRIMARY KEY REFERENCES recorder_pages(page_id),
+                max_beat INTEGER NOT NULL,
+                next_beat INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS window_slots (
+                page_id TEXT NOT NULL REFERENCES window_pages(page_id),
+                coordinate TEXT NOT NULL,
+                beats TEXT NOT NULL,
+                PRIMARY KEY (page_id, coordinate)
+            );
+            CREATE TABLE IF NOT EXISTS window_bookings (
+                ticket TEXT PRIMARY KEY,
+                page_id TEXT NOT NULL REFERENCES window_pages(page_id),
+                coordinate TEXT NOT NULL,
+                FOREIGN KEY (page_id, coordinate) REFERENCES window_slots(page_id, coordinate),
+                UNIQUE (page_id, coordinate)
+            );
+            CREATE TABLE IF NOT EXISTS window_reads (
+                page_id TEXT NOT NULL REFERENCES window_pages(page_id),
+                beat INTEGER NOT NULL,
+                ticket TEXT REFERENCES window_bookings(ticket),
+                PRIMARY KEY (page_id, beat)
             );
         ''')
 
@@ -89,3 +114,57 @@ class RecorderJournal:
 
     def get_retirement(self, page_id: str) -> bool:
         return bool(self.retirement_count(page_id))
+
+    def save_windows(self, page_id: str, windows: dict[str, frozenset]) -> None:
+        max_beat = max(beat for beats in windows.values() for beat in beats)
+        self.db.execute('INSERT INTO window_pages VALUES (?, ?, 1)', (page_id, max_beat))
+        self.db.executemany('INSERT INTO window_slots VALUES (?, ?, ?)',
+                            ((page_id, coordinate, json.dumps(sorted(beats)))
+                             for coordinate, beats in windows.items()))
+
+    def is_windowed(self, page_id: str) -> bool:
+        return self.db.execute('SELECT 1 FROM window_pages WHERE page_id = ?',
+                               (page_id,)).fetchone() is not None
+
+    def window_state(self, page_id: str) -> tuple[int, int] | None:
+        row = self.db.execute('SELECT max_beat, next_beat FROM window_pages WHERE page_id = ?',
+                              (page_id,)).fetchone()
+        return tuple(row) if row is not None else None
+
+    def window_beats(self, page_id: str) -> dict[str, frozenset]:
+        return {coordinate: frozenset(json.loads(beats))
+                for coordinate, beats in self.db.execute(
+                    'SELECT coordinate, beats FROM window_slots WHERE page_id = ?', (page_id,))}
+
+    def get_booking(self, ticket: str) -> tuple[str, str] | None:
+        row = self.db.execute('SELECT page_id, coordinate FROM window_bookings WHERE ticket = ?',
+                              (ticket,)).fetchone()
+        return tuple(row) if row is not None else None
+
+    def slot_booking(self, page_id: str, coordinate: str) -> str | None:
+        row = self.db.execute('''
+            SELECT ticket FROM window_bookings WHERE page_id = ? AND coordinate = ?
+        ''', (page_id, coordinate)).fetchone()
+        return row[0] if row is not None else None
+
+    def page_bookings(self, page_id: str) -> tuple[tuple[str, str], ...]:
+        return tuple((ticket, coordinate) for ticket, coordinate in self.db.execute(
+            'SELECT ticket, coordinate FROM window_bookings WHERE page_id = ? ORDER BY rowid',
+            (page_id,)))
+
+    def save_booking(self, ticket: str, page_id: str, coordinate: str) -> None:
+        self.db.execute('INSERT INTO window_bookings VALUES (?, ?, ?)', (ticket, page_id, coordinate))
+
+    def page_reads(self, page_id: str) -> dict[int, str | None]:
+        return {beat: ticket for beat, ticket in self.db.execute(
+            'SELECT beat, ticket FROM window_reads WHERE page_id = ?', (page_id,))}
+
+    def save_read(self, page_id: str, beat: int, ticket: str | None, next_beat: int) -> None:
+        self.db.execute('INSERT INTO window_reads VALUES (?, ?, ?)', (page_id, beat, ticket))
+        self.db.execute('UPDATE window_pages SET next_beat = ? WHERE page_id = ?',
+                        (next_beat, page_id))
+
+    def ticket_read(self, ticket: str) -> tuple[str, int] | None:
+        row = self.db.execute('SELECT page_id, beat FROM window_reads WHERE ticket = ?',
+                              (ticket,)).fetchone()
+        return tuple(row) if row is not None else None
